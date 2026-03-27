@@ -3,6 +3,30 @@ import logger from '../utils/logger.js';
 import jwt from 'jsonwebtoken';
 import { HTTP_STATUS_CODES } from '../config/constants.js';
 
+const isStrongPassword = (password) => {
+  if (typeof password !== 'string') return false;
+
+  // At least 8 chars, 1 uppercase, 1 lowercase, 1 number, 1 special char
+  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/.test(password);
+};
+
+const buildAuthResponse = async (user) => {
+  const accessToken = user.generateAuthToken();
+  const refreshToken = user.generateRefreshToken();
+
+  user.refreshToken = refreshToken;
+  user.refreshTokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  await user.save();
+
+  return {
+    user: user.toJSON(),
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expires_in: 86400,
+  };
+};
+
+
 export const getAllUsers = async (req, res, next) => {
   try {
     const users = await User.find();
@@ -90,7 +114,7 @@ export const deleteUser = async (req, res, next) => {
 
 export const register = async (req, res, next) => {
   try {
-    const { name, email, password, role = 'user' } = req.body;
+    const { name, email, password, role = 'user', adminSecretKey } = req.body;
 
     if (!name || !email || !password) {
       return res.status(HTTP_STATUS_CODES.BAD_REQUEST).json({
@@ -99,7 +123,17 @@ export const register = async (req, res, next) => {
       });
     }
 
-    const existingUser = await User.findOne({ email });
+    if (!isStrongPassword(password)) {
+      return res.status(HTTP_STATUS_CODES.BAD_REQUEST).json({
+        success: false,
+        message:
+          'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.',
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(HTTP_STATUS_CODES.CONFLICT).json({
         success: false,
@@ -107,28 +141,46 @@ export const register = async (req, res, next) => {
       });
     }
 
-    const user = await User.create({ name, email, password, role });
-    const accessToken = user.generateAuthToken();
-    const refreshToken = user.generateRefreshToken();
+    let finalRole = role || 'user';
 
-    // Store refresh token in database
-    user.refreshToken = refreshToken;
-    user.refreshTokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 1 day
-    await user.save();
+    if (!['user', 'parent', 'admin'].includes(finalRole)) {
+      finalRole = 'user';
+    }
+
+    if (finalRole === 'admin') {
+      if (!process.env.ADMIN_SECRET_KEY) {
+        return res.status(HTTP_STATUS_CODES.INTERNAL_SERVER_ERROR).json({
+          success: false,
+          message: 'ADMIN_SECRET_KEY is not configured on the server.',
+        });
+      }
+
+      if (!adminSecretKey || adminSecretKey !== process.env.ADMIN_SECRET_KEY) {
+        return res.status(HTTP_STATUS_CODES.FORBIDDEN).json({
+          success: false,
+          message: 'Invalid admin secret key.',
+        });
+      }
+    }
+
+    const user = await User.create({
+      name: name.trim(),
+      email: normalizedEmail,
+      password,
+      role: finalRole,
+    });
+
+    const authData = await buildAuthResponse(user);
 
     res.status(HTTP_STATUS_CODES.CREATED).json({
       success: true,
-      data: {
-        user: user.toJSON(),
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        expires_in: 86400, // 24 hours in seconds
-      },
+      data: authData,
     });
   } catch (error) {
     next(error);
   }
 };
+
 
 export const login = async (req, res, next) => {
   try {

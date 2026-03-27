@@ -7,7 +7,7 @@ import errorHandler from './middleware/errorHandler.js';
 import healthRoutes from './routes/health.js';
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
-import questionnaireRoutes from './routes/questionnaires.js';
+import onboardingRoutes from './routes/onboarding.js';
 
 
 const app = express();
@@ -25,7 +25,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/questionnaires', questionnaireRoutes);
+app.use('/api/onboarding', onboardingRoutes);
 
 // Error handling middleware
 app.use(errorHandler);
